@@ -244,6 +244,9 @@ IMGUI_API void ImGui::ShowCoolBarMetrics(bool* vOpened) {
     if (ImGui::Begin("ImCoolBar Metrics", vOpened)) {
         ImGuiContext& g = *GImGui;
         for (auto* pWindow : g.Windows) {
+            if (pWindow->StateStorage.Data.Size == 0) {
+                continue;
+            }
             const int type = pWindow->StateStorage.GetInt(pWindow->GetID(ICB_PREFIX "Type"));
             if (type == ICB_TYPE_MAGIC) {
                 if (!TreeNode(pWindow, "ImCoolBar %s", pWindow->Name)) {
