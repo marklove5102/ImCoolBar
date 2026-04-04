@@ -35,10 +35,7 @@ SOFTWARE.
 #define ICB_TYPE_MAGIC 0x49434231  // "ICB1"
 
 #ifdef _MSC_VER
-#include <Windows.h>
-#define ICB_DEBUG_BREAK      \
-    if (IsDebuggerPresent()) \
-    __debugbreak()
+#define ICB_DEBUG_BREAK __debugbreak()
 #else
 #define ICB_DEBUG_BREAK
 #endif
@@ -56,8 +53,8 @@ static float getBarSize(const float vNormalSize, const float vHoveredSize, const
 }
 
 // https://codesandbox.io/s/motion-dock-forked-hs4p8d?file=/src/Dock.tsx
-static float getHoverSize(const float vValue, const float vNormalSize, const float vHoveredSize, const float vStength, const float vScale) {
-    return getBarSize(vNormalSize, vHoveredSize, bubbleEffect(vValue, vStength) * vScale);
+static float getHoverSize(const float vValue, const float vNormalSize, const float vHoveredSize, const float vStrength, const float vScale) {
+    return getBarSize(vNormalSize, vHoveredSize, bubbleEffect(vValue, vStrength) * vScale);
 }
 
 static bool isWindowHovered(ImGuiWindow* vWindow) {
@@ -147,9 +144,11 @@ IMGUI_API bool ImGui::BeginCoolBar(const char* vLabel, ImCoolBarFlags vCBFlags, 
             bar_size.x = cross + pad.x;
         }
 
-        const ImGuiViewport* pViewport = pWindow->Viewport;
-        ImVec2 new_pos = ImFloor(pViewport->Pos + (pViewport->Size - bar_size) * vConfig.anchor);
-        ImGui::SetWindowPos(new_pos);
+        if (vConfig.anchor.x >= 0.0f && vConfig.anchor.y >= 0.0f) {
+            const ImGuiViewport* pViewport = pWindow->Viewport;
+            ImVec2 new_pos = ImFloor(pViewport->Pos + (pViewport->Size - bar_size) * vConfig.anchor);
+            ImGui::SetWindowPos(new_pos);
+        }
     }
 
     return res;
