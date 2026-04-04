@@ -32,6 +32,7 @@ SOFTWARE.
 #include <array>
 
 #define ICB_PREFIX "ICB"
+#define ICB_TYPE_MAGIC 0x49434231  // "ICB1"
 
 #ifdef _MSC_VER
 #include <Windows.h>
@@ -47,7 +48,7 @@ SOFTWARE.
     ICB_DEBUG_BREAK
 
 static float bubbleEffect(const float vValue, const float vStrength) {
-    return pow(cos(vValue * IM_PI * vStrength), 8.0f);
+    return powf(fabsf(cosf(vValue * IM_PI * vStrength)), 8.0f);
 }
 
 static float getBarSize(const float vNormalSize, const float vHoveredSize, const float vScale) {
@@ -103,9 +104,10 @@ IMGUI_API bool ImGui::BeginCoolBar(const char* vLabel, ImCoolBarFlags vCBFlags, 
         const bool isVertical = (vCBFlags & ImCoolBarFlags_Vertical);
         const bool isHorizontal = (vCBFlags & ImCoolBarFlags_Horizontal);
         IM_ASSERT((isHorizontal && !isVertical) || (!isHorizontal && isVertical));
+        IM_ASSERT(vConfig.normal_size <= vConfig.hovered_size);
 
         ImGuiWindow* pWindow = GetCurrentWindow();
-        pWindow->StateStorage.SetVoidPtr(pWindow->GetID(ICB_PREFIX "Type"), (void*)"ImCoolBar");
+        pWindow->StateStorage.SetInt(pWindow->GetID(ICB_PREFIX "Type"), ICB_TYPE_MAGIC);
         pWindow->StateStorage.SetInt(pWindow->GetID(ICB_PREFIX "ItemIdx"), 0);
         pWindow->StateStorage.SetInt(pWindow->GetID(ICB_PREFIX "Flags"), vCBFlags);
         const float anchor = ImClamp(getChannelInv(vConfig.anchor, vCBFlags), 0.0f, 1.0f);
@@ -118,13 +120,15 @@ IMGUI_API bool ImGui::BeginCoolBar(const char* vLabel, ImCoolBarFlags vCBFlags, 
 
         const auto anim_scale_id = pWindow->GetID(ICB_PREFIX "AnimScale");
         float anim_scale = pWindow->StateStorage.GetFloat(anim_scale_id);
+        ImGuiContext& g = *GImGui;
+        const float anim_delta = vConfig.anim_step * g.IO.DeltaTime * 60.0f;
         if (isWindowHovered(pWindow)) {
             if (anim_scale < 1.0f) {
-                anim_scale += vConfig.anim_step;
+                anim_scale += anim_delta;
             }
         } else {
             if (anim_scale > 0.0f) {
-                anim_scale -= vConfig.anim_step;
+                anim_scale -= anim_delta;
             }
         }
 
@@ -173,7 +177,7 @@ IMGUI_API bool ImGui::CoolBarItem() {
     const auto last_mouse_pos_id = pWindow->GetID(ICB_PREFIX "LastMousePos");
     auto last_mouse_pos = pWindow->StateStorage.GetFloat(last_mouse_pos_id);
 
-    assert(normal_size > 0.0f);
+    IM_ASSERT(normal_size > 0.0f);
 
     if (flags & ImCoolBarFlags_Horizontal) {
         if (idx) {
@@ -184,6 +188,8 @@ IMGUI_API bool ImGui::CoolBarItem() {
 
     if (isWindowHovered(pWindow)) {
         last_mouse_pos = getChannel(g.IO.MousePos, flags);
+    } else if (last_mouse_pos == 0.0f) {
+        last_mouse_pos = getChannel(pWindow->Pos, flags) + getChannel(pWindow->Size, flags) * 0.5f;
     }
 
     if (current_item_size <= 0.0f) {
@@ -239,8 +245,8 @@ IMGUI_API void ImGui::ShowCoolBarMetrics(bool* vOpened) {
     if (ImGui::Begin("ImCoolBar Metrics", vOpened)) {
         ImGuiContext& g = *GImGui;
         for (auto* pWindow : g.Windows) {
-            const char* type = (const char*)pWindow->StateStorage.GetVoidPtr(pWindow->GetID(ICB_PREFIX "Type"));
-            if (type != nullptr && strcmp(type, "ImCoolBar") == 0) {
+            const int type = pWindow->StateStorage.GetInt(pWindow->GetID(ICB_PREFIX "Type"));
+            if (type == ICB_TYPE_MAGIC) {
                 if (!TreeNode(pWindow, "ImCoolBar %s", pWindow->Name)) {
                     continue;
                 }
@@ -280,7 +286,7 @@ IMGUI_API void ImGui::ShowCoolBarMetrics(bool* vOpened) {
                     ImGui::TableNextColumn();
                     ImGui::Text("%s", "Flags ");
                     ImGui::TableNextColumn();
-                    if (flags & ImCoolBarFlags_None) {
+                    if (flags == ImCoolBarFlags_None) {
                         ImGui::Text("None");
                     }
                     if (flags & ImCoolBarFlags_Vertical) {
