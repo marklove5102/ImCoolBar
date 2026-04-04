@@ -2,64 +2,109 @@
 [![Linux](https://github.com/aiekick/ImCoolBar/actions/workflows/linux.yml/badge.svg)](https://github.com/aiekick/ImCoolBar/actions/workflows/linux.yml)
 [![Osx](https://github.com/aiekick/ImCoolBar/actions/workflows/osx.yml/badge.svg)](https://github.com/aiekick/ImCoolBar/actions/workflows/osx.yml)
 
-# ImCoolbar
+# ImCoolBar
 
-# Minimal Sample
+macOS Dock-style magnification bar for [Dear ImGui](https://github.com/ocornut/imgui).
+
+## Features
+
+- **Bubble magnification effect** -- Items smoothly scale up when the mouse approaches, mimicking the macOS Dock behavior (cos^8 curve).
+- **Horizontal and Vertical** -- Supports both orientations via `ImCoolBarFlags_Horizontal` / `ImCoolBarFlags_Vertical`.
+- **Configurable anchor** -- Position the bar anywhere on screen with `anchor` (viewport-relative, 0..1).
+- **Per-bar settings** -- Normal/hovered size, animation speed, effect strength.
+- **Built-in demo window** -- `ShowCoolBarDemoWindow()` lets you tweak all settings at runtime.
+- **Built-in metrics window** -- `ShowCoolBarMetrics()` to inspect internal state.
+- **C API** -- All functions available as plain C wrappers for binding generators (cimgui, etc.).
+- **DLL-ready** -- `IMCOOLBAR_API` macro for `__declspec(dllexport)` support.
+
+## Integration
+
+### 1. Add files
+
+Copy `ImCoolBar.h` and `ImCoolBar.cpp` into your project. Include `ImCoolBar.h` after `imgui.h`.
+
+### 2. Usage
 
 ```cpp
-	ImGuiContext& g = *GImGui;
-	const float& ref_font_scale = g.FontSizeBase;
+#include "ImCoolBar.h"
 
-	static bool show_imgui_demo{false};
-	static bool show_implot_demo{false};
-	static bool show_imgui_metrics{false};
-	static bool show_imcoolbar_metrics{false};
-	static std::array<const char*, 4U> arr = {"ImGui\nDemo", "ImPlot\nDemo", "ImGui\nMetrics", "ImCoolBar\nMetrics"};
-	static ImGui::ImCoolBarConfig _config;
-	_config.normal_size = 35.0f;
-	_config.hovered_size = 100.0f;
-	_config.anchor = ImVec2(0.5f, 1.0f);
-	
-	if (ImGui::BeginCoolBar("CoolBarMainWin", ImCoolBarFlags_Horizontal, _config)) {
-		for (size_t idx = 0U; idx < arr.size(); ++idx) {
-			if (ImGui::CoolBarItem()) {
-				const char* label = arr.at(idx);
-				const float w = ImGui::GetCoolBarItemWidth();
-				const float s = ImGui::GetCoolBarItemScale();
-				ImGui::PushFont(nullptr, ref_font_scale * s);
-				const auto ret = ImGui::Button(label, ImVec2(w * 2.0f, w));
-				ImGui::PopFont();
-				if (ret) {
-					switch (idx) {
-						case 0: show_imgui_demo = !show_imgui_demo; break;
-						case 1: show_implot_demo = !show_implot_demo; break;
-						case 2: show_imgui_metrics = !show_imgui_metrics; break;
-						case 3: show_imcoolbar_metrics = !show_imcoolbar_metrics; break;
-					}
-				}
-			}
-		}
-		ImGui::EndCoolBar();
-	}
+// Optional: check version at startup
+IMCOOLBAR_CHECKVERSION();
 
-	if (show_imgui_demo) {
-		ImGui::ShowDemoWindow(&show_imgui_demo);
-	}
-	if (show_implot_demo) {
-		ImPlot::ShowDemoWindow(&show_implot_demo);
-	}
-	if (show_imgui_metrics) {
-		ImGui::ShowMetricsWindow(&show_imgui_metrics);
-	}
-	if (show_imcoolbar_metrics) {
-		ImGui::ShowCoolBarMetrics(&show_imcoolbar_metrics);
-	}
+// In your render loop
+ImGui::ImCoolBarConfig config;
+config.normalSize = 40.0f;
+config.hoveredSize = 150.0f;
+config.anchor = ImVec2(0.5f, 1.0f);  // bottom-center
+
+if (ImGui::BeginCoolBar("MyDock", ImCoolBarFlags_Horizontal, config)) {
+    for (int i = 0; i < itemCount; ++i) {
+        if (ImGui::CoolBarItem()) {
+            float w = ImGui::GetCoolBarItemWidth();
+            float s = ImGui::GetCoolBarItemScale();
+            ImGui::ImageButton("##icon", icons[i], ImVec2(w, w));
+        }
+    }
+    ImGui::EndCoolBar();
+}
 ```
 
-Result : 
+### 3. Demo window
 
-![alt text](https://github.com/aiekick/ImCoolBar/blob/DemoApp/doc/sample.gif)
+```cpp
+static bool showDemo = true;
+ImGui::ShowCoolBarDemoWindow(&showDemo);
+```
 
-# Demo App 
+## API
+
+```cpp
+namespace ImGui {
+    bool BeginCoolBar(const char* aLabel, ImCoolBarFlags aCBFlags = ImCoolBarFlags_Vertical,
+                      const ImCoolBarConfig& arConfig = {}, ImGuiWindowFlags aWinFlags = ImGuiWindowFlags_None);
+    void EndCoolBar();
+    bool CoolBarItem();
+    float GetCoolBarItemWidth();
+    float GetCoolBarItemScale();
+    void ShowCoolBarMetrics(bool* apoOpen);
+    void ShowCoolBarDemoWindow(bool* apoOpen = nullptr);
+    bool CoolBarDebugCheckVersion(const char* aVersion, size_t aConfigSize);
+}
+```
+
+## Configuration
+
+`ImCoolBarConfig` parameters:
+
+| Parameter | Default | Description |
+|---|---|---|
+| `anchor` | `(-1, -1)` | Viewport-relative position (0..1). (-1,-1) = don't position |
+| `normalSize` | `40` | Item size when not hovered (pixels) |
+| `hoveredSize` | `60` | Item size at maximum hover (pixels) |
+| `animStep` | `0.15` | Animation speed factor (framerate-independent) |
+| `effectStrength` | `0.5` | Bubble curve spread (higher = wider effect) |
+
+## C API
+
+All functions are available as C wrappers prefixed with `ImCoolBar_`:
+
+```c
+bool ImCoolBar_BeginCoolBar(const char* aLabel, int aCBFlags, float aNormalSize, float aHoveredSize,
+                             float aAnimStep, float aEffectStrength, float aAnchorX, float aAnchorY, int aWinFlags);
+void ImCoolBar_EndCoolBar(void);
+bool ImCoolBar_CoolBarItem(void);
+float ImCoolBar_GetCoolBarItemWidth(void);
+float ImCoolBar_GetCoolBarItemScale(void);
+void ImCoolBar_ShowCoolBarMetrics(bool* apoOpen);
+void ImCoolBar_ShowCoolBarDemoWindow(bool* apoOpen);
+const char* ImCoolBar_GetVersion(void);
+int ImCoolBar_GetVersionNum(void);
+```
+
+## Demo App
 
 ![alt text](https://github.com/aiekick/ImCoolBar/blob/DemoApp/doc/DemoApp.gif)
+
+## License
+
+MIT License -- Copyright (c) 2024-2026 Stephane Cuillerdier (aka Aiekick)
