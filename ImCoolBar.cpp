@@ -22,11 +22,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-#ifndef IMGUI_DEFINE_MATH_OPERATORS
-#define IMGUI_DEFINE_MATH_OPERATORS
-#endif
 #include "ImCoolBar.h"
-#include "imgui_internal.h"
 #include <cmath>
 #include <vector>
 #include <array>
@@ -57,10 +53,6 @@ static float s_getHoverSize(const float aValue, const float aNormalSize, const f
     return s_getBarSize(aNormalSize, aHoveredSize, s_bubbleEffect(aValue, aStrength) * aScale);
 }
 
-static bool s_isWindowHovered(ImGuiWindow* apWindow) {
-    return ImGui::IsMouseHoveringRect(apWindow->Rect().Min, apWindow->Rect().Max);
-}
-
 static float s_getChannel(const ImVec2& arVec, const ImCoolBarFlags aFlags) {
     if (aFlags & ImCoolBarFlags_Horizontal) {
         return arVec.x;
@@ -75,7 +67,20 @@ static float s_getChannelInv(const ImVec2& arVec, const ImCoolBarFlags aFlags) {
     return arVec.x;
 }
 
-IMCOOLBAR_API bool ImGui::BeginCoolBar(const char* aLabel, ImCoolBarFlags aCBFlags, const ImCoolBarConfig& arConfig, ImGuiWindowFlags aWinFlags) {
+// Use the actual window rect for hover detection.
+// The window rect already fits the bubbled items tightly,
+// so it naturally covers the visible buttons without extending
+// beyond them.  No artificial margin needed.
+static bool s_isBarHovered(ImGuiWindow* apWindow) {
+    if (!ImGui::IsMouseHoveringRect(apWindow->Rect().Min, apWindow->Rect().Max)) {
+        return false;
+    }
+    // Don't react if another window is on top of the bar
+    const auto* const pHovered = GImGui->HoveredWindow;
+    return pHovered == nullptr || pHovered == apWindow;
+}
+
+IMCOOLBAR_API bool ImGui::BeginCoolBar(const char* aLabel, const ImCoolBarSettings& arSettings, ImGuiWindowFlags aWinFlags) {
     const auto flags =                         //
         aWinFlags                              //
         | ImGuiWindowFlags_NoTitleBar          //
@@ -98,28 +103,31 @@ IMCOOLBAR_API bool ImGui::BeginCoolBar(const char* aLabel, ImCoolBarFlags aCBFla
         ImGui::End();
     } else {
         // Can be Horizontal or Vertical, not both
-        const auto isVertical = (aCBFlags & ImCoolBarFlags_Vertical);
-        const auto isHorizontal = (aCBFlags & ImCoolBarFlags_Horizontal);
+        const auto isVertical = (arSettings.mode & ImCoolBarFlags_Vertical);
+        const auto isHorizontal = (arSettings.mode & ImCoolBarFlags_Horizontal);
         IM_ASSERT((isHorizontal && !isVertical) || (!isHorizontal && isVertical));
-        IM_ASSERT(arConfig.normalSize <= arConfig.hoveredSize);
+        IM_ASSERT(arSettings.normalSize <= arSettings.hoveredSize);
 
         auto* const pWindow = GetCurrentWindow();
         pWindow->StateStorage.SetInt(pWindow->GetID(ICB_PREFIX "Type"), ICB_TYPE_MAGIC);
+        // Save previous frame item count before resetting
+        const auto prevItemCount = pWindow->StateStorage.GetInt(pWindow->GetID(ICB_PREFIX "ItemIdx"));
+        pWindow->StateStorage.SetInt(pWindow->GetID(ICB_PREFIX "ItemCount"), prevItemCount);
         pWindow->StateStorage.SetInt(pWindow->GetID(ICB_PREFIX "ItemIdx"), 0);
-        pWindow->StateStorage.SetInt(pWindow->GetID(ICB_PREFIX "Flags"), aCBFlags);
-        const auto anchor = ImClamp(s_getChannelInv(arConfig.anchor, aCBFlags), 0.0f, 1.0f);
+        pWindow->StateStorage.SetInt(pWindow->GetID(ICB_PREFIX "Flags"), arSettings.mode);
+        const auto anchor = s_getChannelInv(ImClamp(arSettings.anchor, ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f)), arSettings.mode);
         pWindow->StateStorage.SetFloat(pWindow->GetID(ICB_PREFIX "Anchor"), anchor);
         const auto normalSizeId = pWindow->GetID(ICB_PREFIX "NormalSize");
         const auto hoveredSizeId = pWindow->GetID(ICB_PREFIX "HoveredSize");
-        pWindow->StateStorage.SetFloat(normalSizeId, arConfig.normalSize);
-        pWindow->StateStorage.SetFloat(hoveredSizeId, arConfig.hoveredSize);
-        pWindow->StateStorage.SetFloat(pWindow->GetID(ICB_PREFIX "EffectStrength"), arConfig.effectStrength);
+        pWindow->StateStorage.SetFloat(normalSizeId, arSettings.normalSize);
+        pWindow->StateStorage.SetFloat(hoveredSizeId, arSettings.hoveredSize);
+        pWindow->StateStorage.SetFloat(pWindow->GetID(ICB_PREFIX "EffectStrength"), ImClamp(arSettings.effectStrength, 0.0f, 1.0f));
 
         const auto animScaleId = pWindow->GetID(ICB_PREFIX "AnimScale");
         auto animScale = pWindow->StateStorage.GetFloat(animScaleId);
         auto& g = *GImGui;
-        const auto animDelta = arConfig.animStep * g.IO.DeltaTime * 60.0f;
-        if (s_isWindowHovered(pWindow)) {
+        const auto animDelta = arSettings.animStep * g.IO.DeltaTime * 60.0f;
+        if (s_isBarHovered(pWindow)) {
             if (animScale < 1.0f) {
                 animScale += animDelta;
             }
@@ -132,7 +140,7 @@ IMCOOLBAR_API bool ImGui::BeginCoolBar(const char* aLabel, ImCoolBarFlags aCBFla
         animScale = ImClamp(animScale, 0.0f, 1.0f);
         pWindow->StateStorage.SetFloat(animScaleId, animScale);
 
-        // --- Position with predicted cross-axis size for THIS frame ---
+        // Position with predicted cross-axis size for THIS frame ---
         const auto pad = ImGui::GetStyle().WindowPadding * 2.0f;
         auto barSize = pWindow->ContentSize + pad;  // along main axis ok
         const auto normalSize = pWindow->StateStorage.GetFloat(normalSizeId);
@@ -144,11 +152,71 @@ IMCOOLBAR_API bool ImGui::BeginCoolBar(const char* aLabel, ImCoolBarFlags aCBFla
             barSize.x = cross + pad.x;
         }
 
-        if (arConfig.anchor.x >= 0.0f && arConfig.anchor.y >= 0.0f) {
-            const auto* const pViewport = pWindow->Viewport;
-            const auto newPos = ImFloor(pViewport->Pos + (pViewport->Size - barSize) * arConfig.anchor);
-            ImGui::SetWindowPos(newPos);
+        const auto clampedAnchor = ImClamp(arSettings.anchor, ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f));
+        const auto* const pViewport = pWindow->Viewport;
+        auto newPos = ImFloor(pViewport->Pos + (pViewport->Size - barSize) * clampedAnchor);
+
+        // Compute base (non-bubbled) bar position: this is CONSTANT for
+        // a given viewport size and item count.  CoolBarItem uses it to
+        // compute the bubble effect from stable positions.
+        const auto padMain = s_getChannel(pad, arSettings.mode);
+        const auto viewMain = s_getChannel(pViewport->Pos, arSettings.mode);
+        const auto viewSizeMain = s_getChannel(pViewport->Size, arSettings.mode);
+        const auto anchorMainFrac = s_getChannel(clampedAnchor, arSettings.mode);
+        const auto baseBarMain = (prevItemCount > 0) ? (prevItemCount * normalSize + padMain) : s_getChannel(barSize, arSettings.mode);
+        const auto baseBarPosMain = viewMain + (viewSizeMain - baseBarMain) * anchorMainFrac;
+
+        // Store for CoolBarItem (STABLE position, not the pinned one)
+        pWindow->StateStorage.SetFloat(pWindow->GetID(ICB_PREFIX "BaseBarPos"), baseBarPosMain);
+
+        // Exact cursor pinning: compute all bubbled item sizes to find the
+        // precise position in the bubbled layout that corresponds to the
+        // mouse's position in the base layout.  This ensures the exact
+        // pixel under the cursor stays fixed as items grow.
+        if (animScale > 0.0f && prevItemCount > 0) {
+            const auto mouseMain = s_getChannel(g.IO.MousePos, arSettings.mode);
+            const auto wpMain = s_getChannel(ImGui::GetStyle().WindowPadding, arSettings.mode);
+            const auto baseContentSize = prevItemCount * normalSize;
+
+            // Clamp the mouse rel position to the base bar content area.
+            // This avoids dragging the bar when the mouse goes past the
+            // edges, while keeping a smooth transition (no jump).
+            const auto mouseBaseRel = ImClamp(mouseMain - baseBarPosMain - wpMain, 0.0f, baseContentSize);
+
+            // Simulate all item sizes using the same formula as CoolBarItem
+            auto mouseBubbledRel = 0.0f;
+            auto totalBubbledContent = 0.0f;
+            auto mouseFound = false;
+            for (int32_t i = 0; i < prevItemCount; ++i) {
+                const auto baseBtnCenter = baseBarPosMain + wpMain + i * normalSize + normalSize * 0.5f;
+                const auto diffPos = (mouseMain - baseBtnCenter) / baseBarMain;
+                const auto es = pWindow->StateStorage.GetFloat(pWindow->GetID(ICB_PREFIX "EffectStrength"));
+                const auto itemSize = s_getHoverSize(diffPos, normalSize, hoveredSize, es, animScale);
+                const auto baseItemStart = static_cast<float>(i) * normalSize;
+                const auto baseItemEnd = baseItemStart + normalSize;
+                if (!mouseFound && mouseBaseRel < baseItemEnd) {
+                    const auto fracInItem = ImClamp((mouseBaseRel - baseItemStart) / normalSize, 0.0f, 1.0f);
+                    mouseBubbledRel = totalBubbledContent + fracInItem * itemSize;
+                    mouseFound = true;
+                }
+                totalBubbledContent += itemSize;
+            }
+            if (!mouseFound) {
+                mouseBubbledRel = totalBubbledContent;
+            }
+
+            // Position so the exact pixel under the cursor stays fixed.
+            // Use clamped mouse position so bar doesn't follow past edges.
+            const auto clampedMouseMain = baseBarPosMain + wpMain + mouseBaseRel;
+            const auto pinnedPos = clampedMouseMain - wpMain - mouseBubbledRel;
+            if (arSettings.mode & ImCoolBarFlags_Horizontal) {
+                newPos.x = ImFloor(pinnedPos);
+            } else {
+                newPos.y = ImFloor(pinnedPos);
+            }
         }
+
+        ImGui::SetWindowPos(newPos);
     }
 
     return res;
@@ -185,7 +253,7 @@ IMCOOLBAR_API bool ImGui::CoolBarItem() {
     }
     auto& g = *GImGui;
 
-    if (s_isWindowHovered(pWindow)) {
+    if (s_isBarHovered(pWindow)) {
         lastMousePos = s_getChannel(g.IO.MousePos, cbFlags);
     } else if (lastMousePos == 0.0f) {
         lastMousePos = s_getChannel(pWindow->Pos, cbFlags) + s_getChannel(pWindow->Size, cbFlags) * 0.5f;
@@ -197,12 +265,18 @@ IMCOOLBAR_API bool ImGui::CoolBarItem() {
 
     auto currentSize = normalSize;
     if (animScale > 0.0f) {
-        const auto csp = s_getChannel(pWindow->DC.CursorPos, cbFlags);
-        const auto ws = s_getChannel(pWindow->Size, cbFlags);
         const auto wp = s_getChannel(g.Style.WindowPadding, cbFlags);
-        const auto btnCenter = csp + currentItemSize * 0.5f;
-        const auto diffPos = (lastMousePos - btnCenter) / ws;
+
+        // Compute bubble effect using BASE (non-bubbled) item positions.
+        // Base item center = baseBarPos + padding + idx * normalSize + normalSize/2
+        // it doesn't change when items grow, eliminating the feedback loop that caused edge items to drift from the cursor.
+        const auto itemCount = pWindow->StateStorage.GetInt(pWindow->GetID(ICB_PREFIX "ItemCount"));
+        const auto baseBarPos = pWindow->StateStorage.GetFloat(pWindow->GetID(ICB_PREFIX "BaseBarPos"));
+        const auto baseBtnCenter = baseBarPos + wp + idx * normalSize + normalSize * 0.5f;
+        const auto baseBarWidth = (itemCount > 0) ? (itemCount * normalSize + wp * 2.0f) : s_getChannel(pWindow->Size, cbFlags);
+        const auto diffPos = (lastMousePos - baseBtnCenter) / baseBarWidth;
         currentSize = s_getHoverSize(diffPos, normalSize, hoveredSize, effectStrength, animScale);
+
         const auto anchor = pWindow->StateStorage.GetFloat(pWindow->GetID(ICB_PREFIX "Anchor"));
         const auto barHeight = s_getBarSize(normalSize, hoveredSize, animScale);
         const auto btnOffset = ImFloor((barHeight - currentSize) * anchor + wp);
@@ -288,9 +362,6 @@ IMCOOLBAR_API void ImGui::ShowCoolBarMetrics(bool* apoOpen) {
                     ImGui::TableNextColumn();
                     ImGui::Text("%s", "Flags ");
                     ImGui::TableNextColumn();
-                    if (cbFlags == ImCoolBarFlags_None) {
-                        ImGui::Text("None");
-                    }
                     if (cbFlags & ImCoolBarFlags_Vertical) {
                         ImGui::Text("Vertical");
                     }
@@ -320,20 +391,20 @@ IMCOOLBAR_API void ImGui::ShowCoolBarMetrics(bool* apoOpen) {
     ImGui::End();
 }
 
-IMCOOLBAR_API bool ImGui::CoolBarDebugCheckVersion(const char* aVersion, size_t aConfigSize) {
+IMCOOLBAR_API bool ImGui::CoolBarDebugCheckVersion(const char* aVersion, size_t aSettingsSize) {
     auto ok = true;
     if (strcmp(aVersion, IMCOOLBAR_VERSION) != 0) {
         ok = false;
         IM_ASSERT(false && "ImCoolBar version mismatch");
     }
-    if (aConfigSize != sizeof(ImCoolBarConfig)) {
+    if (aSettingsSize != sizeof(ImCoolBarSettings)) {
         ok = false;
-        IM_ASSERT(false && "ImCoolBarConfig size mismatch");
+        IM_ASSERT(false && "ImCoolBarSettings size mismatch");
     }
     return ok;
 }
 
-IMCOOLBAR_API void ImGui::ShowCoolBarDemoWindow(bool* apoOpen) {
+IMCOOLBAR_API void ImGui::ShowCoolBarDemoWindow(bool* apoOpen, ImCoolBarSettings* apoSettings, ImCoolBarSettings* apoDefaultSettings) {
     if (apoOpen != nullptr && !(*apoOpen)) {
         return;
     }
@@ -344,55 +415,40 @@ IMCOOLBAR_API void ImGui::ShowCoolBarDemoWindow(bool* apoOpen) {
     ImGui::Text("ImCoolBar %s", IMCOOLBAR_VERSION);
     ImGui::Separator();
 
-    // Static demo state
-    static ImCoolBarConfig s_config;
-    static ImCoolBarFlags s_flags = ImCoolBarFlags_Horizontal;
-    static int32_t s_itemCount = 5;
+    // Use provided settings or internal default
+    ImCoolBarSettings s_defaultSettings;
+    auto* pDefaultSettings = apoDefaultSettings ? apoDefaultSettings : &s_defaultSettings;
+    auto* pSettings = apoSettings ? apoSettings : &s_defaultSettings;
     static bool s_showMetrics = false;
 
-    if (ImGui::CollapsingHeader("Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
-        auto orient = (s_flags & ImCoolBarFlags_Horizontal) ? 0 : 1;
-        if (ImGui::Combo("Orientation", &orient, "Horizontal\0Vertical\0\0")) {
-            s_flags = (orient == 0) ? ImCoolBarFlags_Horizontal : ImCoolBarFlags_Vertical;
-        }
-
-        ImGui::SliderFloat("Normal Size", &s_config.normalSize, 10.0f, 200.0f, "%.0f");
-        ImGui::SliderFloat("Hovered Size", &s_config.hoveredSize, s_config.normalSize, 400.0f, "%.0f");
-        ImGui::SliderFloat("Anim Step", &s_config.animStep, 0.001f, 0.5f, "%.3f");
-        ImGui::SliderFloat("Effect Strength", &s_config.effectStrength, 0.1f, 2.0f, "%.2f");
-        ImGui::SliderFloat("Anchor X", &s_config.anchor.x, -1.0f, 1.0f, "%.2f");
-        ImGui::SliderFloat("Anchor Y", &s_config.anchor.y, -1.0f, 1.0f, "%.2f");
-        ImGui::SliderInt("Item Count", &s_itemCount, 1, 20);
-        ImGui::Separator();
-        if (ImGui::Button("Reset Defaults")) {
-            s_config = ImCoolBarConfig();
-            s_flags = ImCoolBarFlags_Horizontal;
-            s_itemCount = 5;
-        }
+    if (ImGui::Button("Reset Defaults")) {
+        *pSettings = *pDefaultSettings;
     }
-
-    if (ImGui::CollapsingHeader("Preview", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::TextWrapped("The CoolBar is rendered as a top-level window (see below the demo window).");
-        ImGui::Checkbox("Show Metrics", &s_showMetrics);
+    ImGui::SameLine();
+    if (ImGui::Button("Save to Defaults")) {
+        *pDefaultSettings = *pSettings;
+    }
+    ImGui::SameLine();
+    ImGui::Checkbox("Show Metrics", &s_showMetrics);
+    if (ImGui::CollapsingHeader("Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::SliderFloat("Normal Size", &pSettings->normalSize, 10.0f, 200.0f, "%.0f");
+        ImGui::SliderFloat("Hovered Size", &pSettings->hoveredSize, pSettings->normalSize, 400.0f, "%.0f");
+        ImGui::SliderFloat("Anim Step", &pSettings->animStep, 0.001f, 0.5f, "%.3f");
+        ImGui::SliderFloat("Effect Strength", &pSettings->effectStrength, 0.0f, 1.0f, "%.2f");
+        ImGui::SliderFloat("Anchor X", &pSettings->anchor.x, 0.0f, 1.0f, "%.2f");
+        ImGui::SliderFloat("Anchor Y", &pSettings->anchor.y, 0.0f, 1.0f, "%.2f");
+        auto modeIdx = static_cast<int>(pSettings->mode - 1);  // -1 because 0 is None
+        if (ImGui::Combo("Mode", &modeIdx, "Horizontal\0Vertical\0\0")) {
+            pSettings->mode = static_cast<ImCoolBarFlags>(modeIdx + 1); // +1 because 0 is None
+        }
+        // Clamp after manual input (Ctrl+Click allows out-of-range values)
+        pSettings->normalSize = ImMax(pSettings->normalSize, 1.0f);
+        pSettings->hoveredSize = ImMax(pSettings->hoveredSize, pSettings->normalSize);
+        pSettings->effectStrength = ImClamp(pSettings->effectStrength, 0.0f, 1.0f);
+        pSettings->anchor = ImClamp(pSettings->anchor, ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f));
     }
 
     ImGui::End();
-
-    // Draw the demo CoolBar
-    ImGui::SetNextWindowBgAlpha(0.5f);
-    if (ImGui::BeginCoolBar("##DemoCoolBar", s_flags, s_config)) {
-        for (int32_t i = 0; i < s_itemCount; ++i) {
-            if (ImGui::CoolBarItem()) {
-                const auto w = ImGui::GetCoolBarItemWidth();
-                ImGui::PushID(i);
-                char label[16];
-                ImFormatString(label, sizeof(label), "%d", i + 1);
-                ImGui::Button(label, ImVec2(w, w));
-                ImGui::PopID();
-            }
-        }
-        ImGui::EndCoolBar();
-    }
 
     if (s_showMetrics) {
         ImGui::ShowCoolBarMetrics(&s_showMetrics);
@@ -411,21 +467,29 @@ IMCOOLBAR_C_API int ImCoolBar_GetVersionNum(void) {
     return IMCOOLBAR_VERSION_NUM;
 }
 
-IMCOOLBAR_C_API bool ImCoolBar_DebugCheckVersion(const char* aVersion, size_t aConfigSize) {
-    return ImGui::CoolBarDebugCheckVersion(aVersion, aConfigSize);
+IMCOOLBAR_C_API bool ImCoolBar_DebugCheckVersion(const char* aVersion, size_t aSettingsSize) {
+    return ImGui::CoolBarDebugCheckVersion(aVersion, aSettingsSize);
 }
 
-IMCOOLBAR_C_API bool ImCoolBar_BeginCoolBar(const char* aLabel,
-                                            int aCBFlags,
-                                            float aNormalSize,
-                                            float aHoveredSize,
-                                            float aAnimStep,
-                                            float aEffectStrength,
-                                            float aAnchorX,
-                                            float aAnchorY,
-                                            int aWinFlags) {
-    ImGui::ImCoolBarConfig config(ImVec2(aAnchorX, aAnchorY), aNormalSize, aHoveredSize, aAnimStep, aEffectStrength);
-    return ImGui::BeginCoolBar(aLabel, aCBFlags, config, aWinFlags);
+// C struct <-> C++ struct conversion helpers
+static ImGui::ImCoolBarSettings s_toCpp(const ImCoolBar_Settings* apSettings) {
+    return ImGui::ImCoolBarSettings(ImVec2(apSettings->anchorX, apSettings->anchorY),
+                                    apSettings->normalSize, apSettings->hoveredSize,
+                                    apSettings->animStep, apSettings->effectStrength);
+}
+
+static void s_toC(const ImGui::ImCoolBarSettings& arSettings, ImCoolBar_Settings* apOut) {
+    apOut->anchorX = arSettings.anchor.x;
+    apOut->anchorY = arSettings.anchor.y;
+    apOut->normalSize = arSettings.normalSize;
+    apOut->hoveredSize = arSettings.hoveredSize;
+    apOut->animStep = arSettings.animStep;
+    apOut->effectStrength = arSettings.effectStrength;
+}
+
+IMCOOLBAR_C_API bool ImCoolBar_BeginCoolBar(const char* aLabel, const ImCoolBar_Settings* apSettings, int aWinFlags) {
+    const auto settings = apSettings ? s_toCpp(apSettings) : ImGui::ImCoolBarSettings();
+    return ImGui::BeginCoolBar(aLabel, settings, aWinFlags);
 }
 
 IMCOOLBAR_C_API void ImCoolBar_EndCoolBar(void) {
@@ -448,6 +512,24 @@ IMCOOLBAR_C_API void ImCoolBar_ShowCoolBarMetrics(bool* apoOpen) {
     ImGui::ShowCoolBarMetrics(apoOpen);
 }
 
-IMCOOLBAR_C_API void ImCoolBar_ShowCoolBarDemoWindow(bool* apoOpen) {
-    ImGui::ShowCoolBarDemoWindow(apoOpen);
+IMCOOLBAR_C_API void ImCoolBar_ShowCoolBarDemoWindow(bool* apoOpen, ImCoolBar_Settings* apoSettings, ImCoolBar_Settings* apoDefaultSettings) {
+    ImGui::ImCoolBarSettings settings;
+    ImGui::ImCoolBarSettings* pSettings = nullptr;
+    if (apoSettings != nullptr) {
+        settings = s_toCpp(apoSettings);
+        pSettings = &settings;
+    }
+    ImGui::ImCoolBarSettings defaults;
+    ImGui::ImCoolBarSettings* pDefaults = nullptr;
+    if (apoDefaultSettings != nullptr) {
+        defaults = s_toCpp(apoDefaultSettings);
+        pDefaults = &defaults;
+    }
+    ImGui::ShowCoolBarDemoWindow(apoOpen, pSettings, pDefaults);
+    if (apoSettings != nullptr) {
+        s_toC(settings, apoSettings);
+    }
+    if (apoDefaultSettings != nullptr) {
+        s_toC(defaults, apoDefaultSettings);
+    }
 }

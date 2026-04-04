@@ -1,7 +1,3 @@
-[![Win](https://github.com/aiekick/ImCoolBar/actions/workflows/win.yml/badge.svg)](https://github.com/aiekick/ImCoolBar/actions/workflows/win.yml)
-[![Linux](https://github.com/aiekick/ImCoolBar/actions/workflows/linux.yml/badge.svg)](https://github.com/aiekick/ImCoolBar/actions/workflows/linux.yml)
-[![Osx](https://github.com/aiekick/ImCoolBar/actions/workflows/osx.yml/badge.svg)](https://github.com/aiekick/ImCoolBar/actions/workflows/osx.yml)
-
 # ImCoolBar
 
 macOS Dock-style magnification bar for [Dear ImGui](https://github.com/ocornut/imgui).
@@ -9,13 +5,20 @@ macOS Dock-style magnification bar for [Dear ImGui](https://github.com/ocornut/i
 ## Features
 
 - **Bubble magnification effect** -- Items smoothly scale up when the mouse approaches, mimicking the macOS Dock behavior (cos^8 curve).
+- **Cursor pinning** -- The exact pixel under the cursor stays fixed as items grow, even for edge items.
 - **Horizontal and Vertical** -- Supports both orientations via `ImCoolBarFlags_Horizontal` / `ImCoolBarFlags_Vertical`.
 - **Configurable anchor** -- Position the bar anywhere on screen with `anchor` (viewport-relative, 0..1).
 - **Per-bar settings** -- Normal/hovered size, animation speed, effect strength.
-- **Built-in demo window** -- `ShowCoolBarDemoWindow()` lets you tweak all settings at runtime.
+- **Built-in demo window** -- `ShowCoolBarDemoWindow()` lets you tweak all settings at runtime, with save/reset defaults.
 - **Built-in metrics window** -- `ShowCoolBarMetrics()` to inspect internal state.
 - **C API** -- All functions available as plain C wrappers for binding generators (cimgui, etc.).
 - **DLL-ready** -- `IMCOOLBAR_API` macro for `__declspec(dllexport)` support.
+
+![Demo](https://github.com/aiekick/ImEffects/blob/master/doc/ImCoolBar.gif)
+
+## Demo App
+
+A full demo is available in the [ImEffects](https://github.com/aiekick/ImEffects) repository or with this [Emscripten](https://aiekick.github.io/ImEffects/) demo
 
 ## Integration
 
@@ -32,12 +35,12 @@ Copy `ImCoolBar.h` and `ImCoolBar.cpp` into your project. Include `ImCoolBar.h` 
 IMCOOLBAR_CHECKVERSION();
 
 // In your render loop
-ImGui::ImCoolBarConfig config;
-config.normalSize = 40.0f;
-config.hoveredSize = 150.0f;
-config.anchor = ImVec2(0.5f, 1.0f);  // bottom-center
+ImGui::ImCoolBarSettings settings;
+settings.normalSize = 40.0f;
+settings.hoveredSize = 150.0f;
+settings.anchor = ImVec2(0.5f, 1.0f);  // bottom-center
 
-if (ImGui::BeginCoolBar("MyDock", ImCoolBarFlags_Horizontal, config)) {
+if (ImGui::BeginCoolBar("MyDock", ImCoolBarFlags_Horizontal, settings)) {
     for (int i = 0; i < itemCount; ++i) {
         if (ImGui::CoolBarItem()) {
             float w = ImGui::GetCoolBarItemWidth();
@@ -53,7 +56,9 @@ if (ImGui::BeginCoolBar("MyDock", ImCoolBarFlags_Horizontal, config)) {
 
 ```cpp
 static bool showDemo = true;
-ImGui::ShowCoolBarDemoWindow(&showDemo);
+static ImGui::ImCoolBarSettings settings;
+static ImGui::ImCoolBarSettings defaults = settings;
+ImGui::ShowCoolBarDemoWindow(&showDemo, &settings, &defaults);
 ```
 
 ## API
@@ -61,28 +66,29 @@ ImGui::ShowCoolBarDemoWindow(&showDemo);
 ```cpp
 namespace ImGui {
     bool BeginCoolBar(const char* aLabel, ImCoolBarFlags aCBFlags = ImCoolBarFlags_Vertical,
-                      const ImCoolBarConfig& arConfig = {}, ImGuiWindowFlags aWinFlags = ImGuiWindowFlags_None);
+                      const ImCoolBarSettings& arSettings = {}, ImGuiWindowFlags aWinFlags = ImGuiWindowFlags_None);
     void EndCoolBar();
     bool CoolBarItem();
     float GetCoolBarItemWidth();
     float GetCoolBarItemScale();
     void ShowCoolBarMetrics(bool* apoOpen);
-    void ShowCoolBarDemoWindow(bool* apoOpen = nullptr);
-    bool CoolBarDebugCheckVersion(const char* aVersion, size_t aConfigSize);
+    void ShowCoolBarDemoWindow(bool* apoOpen = nullptr, ImCoolBarSettings* apoSettings = nullptr,
+                               ImCoolBarSettings* apoDefaultSettings = nullptr);
+    bool CoolBarDebugCheckVersion(const char* aVersion, size_t aSettingsSize);
 }
 ```
 
-## Configuration
+## Settings
 
-`ImCoolBarConfig` parameters:
+`ImCoolBarSettings` parameters:
 
 | Parameter | Default | Description |
 |---|---|---|
-| `anchor` | `(-1, -1)` | Viewport-relative position (0..1). (-1,-1) = don't position |
+| `anchor` | `(0.5, 0.5)` | Viewport-relative position (0..1), clamped |
 | `normalSize` | `40` | Item size when not hovered (pixels) |
-| `hoveredSize` | `60` | Item size at maximum hover (pixels) |
-| `animStep` | `0.15` | Animation speed factor (framerate-independent) |
-| `effectStrength` | `0.5` | Bubble curve spread (higher = wider effect) |
+| `hoveredSize` | `150` | Item size at maximum hover (pixels) |
+| `animStep` | `0.05` | Animation speed factor (framerate-independent) |
+| `effectStrength` | `0.5` | Bubble curve spread (0..1) |
 
 ## C API
 
@@ -96,14 +102,12 @@ bool ImCoolBar_CoolBarItem(void);
 float ImCoolBar_GetCoolBarItemWidth(void);
 float ImCoolBar_GetCoolBarItemScale(void);
 void ImCoolBar_ShowCoolBarMetrics(bool* apoOpen);
-void ImCoolBar_ShowCoolBarDemoWindow(bool* apoOpen);
+void ImCoolBar_ShowCoolBarDemoWindow(bool* apoOpen,
+    float* apoNormalSize, float* apoHoveredSize, float* apoAnimStep, float* apoEffectStrength, float* apoAnchorX, float* apoAnchorY,
+    float* apoDefNormalSize, float* apoDefHoveredSize, float* apoDefAnimStep, float* apoDefEffectStrength, float* apoDefAnchorX, float* apoDefAnchorY);
 const char* ImCoolBar_GetVersion(void);
 int ImCoolBar_GetVersionNum(void);
 ```
-
-## Demo App
-
-![alt text](https://github.com/aiekick/ImCoolBar/blob/DemoApp/doc/DemoApp.gif)
 
 ## License
 
